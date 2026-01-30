@@ -37,14 +37,24 @@ export class SnapshotsApi {
     // Build raw URL (without Wayback toolbar)
     const snapshotUrl = this.client.getRawSnapshotUrl(params.timestamp, params.url);
 
-    // Fetch content
+    // Fetch content - use fetchWithFinalUrl to get actual timestamp from redirect
     let html: string;
+    let actualTimestamp = params.timestamp;
     let statusCode = 200;
 
     try {
-      html = await this.client.withRetry(async () => {
-        return this.client.fetchText(snapshotUrl);
+      const result = await this.client.withRetry(async () => {
+        return this.client.fetchTextWithFinalUrl(snapshotUrl);
       }, 'web/content');
+
+      html = result.text;
+
+      // Extract actual timestamp from final URL if redirected
+      // Wayback URLs follow pattern: /web/{timestamp}id_/{url} or /web/{timestamp}/{url}
+      const timestampMatch = result.finalUrl.match(/\/web\/(\d{14})(?:id_)?\//);
+      if (timestampMatch) {
+        actualTimestamp = timestampMatch[1];
+      }
     } catch (error) {
       if (error instanceof WaybackApiError && error.code === ERROR_CODES.NOT_FOUND) {
         throw new WaybackApiError({
@@ -67,14 +77,20 @@ export class SnapshotsApi {
 
     const response: SnapshotContentResponse = {
       url: params.url,
-      timestamp: params.timestamp,
-      formattedDate: formatTimestamp(params.timestamp),
-      waybackUrl: this.client.getSnapshotUrl(params.timestamp, params.url),
+      timestamp: actualTimestamp, // Use actual timestamp from redirect
+      formattedDate: formatTimestamp(actualTimestamp),
+      waybackUrl: this.client.getSnapshotUrl(actualTimestamp, params.url),
       statusCode,
       contentLength: html.length,
       metadata,
       textContent
     };
+
+    // Add note if timestamp differs from requested
+    if (actualTimestamp !== params.timestamp) {
+      response.requestedTimestamp = params.timestamp;
+      response.note = `Closest snapshot found. Requested: ${params.timestamp}, Actual: ${actualTimestamp}`;
+    }
 
     // Include raw HTML if requested
     if (params.includeRawHtml) {

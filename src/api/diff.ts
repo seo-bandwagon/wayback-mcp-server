@@ -84,21 +84,33 @@ export class DiffService {
 
     // Compare content
     if (compareAll || params.compareElements?.includes('content')) {
-      changes.content = this.compareContent(
+      const contentComparison = this.compareContent(
         content1.textContent,
         content2.textContent,
         params.showDiff ?? true
       );
+      // Only include content changes if there actually are changes
+      if (contentComparison.changed) {
+        changes.content = contentComparison;
+      }
     }
 
     // Compare links
     if (compareAll || params.compareElements?.includes('links')) {
-      changes.links = this.compareLinks(content1, content2);
+      const linksComparison = this.compareLinks(content1, content2);
+      // Only include link changes if there actually are changes
+      if (linksComparison.changed) {
+        changes.links = linksComparison;
+      }
     }
 
     // Compare structure
     if (compareAll || params.compareElements?.includes('structure')) {
-      changes.structure = this.compareStructure(content1, content2);
+      const structureComparison = this.compareStructure(content1, content2);
+      // Only include structure changes if there actually are changes
+      if (structureComparison.changed) {
+        changes.structure = structureComparison;
+      }
     }
 
     const hasChanges = Object.keys(changes).length > 0;

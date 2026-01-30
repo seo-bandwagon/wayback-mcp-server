@@ -141,6 +141,18 @@ export class WaybackClient {
   }
 
   /**
+   * Fetch text/HTML and return the final URL (after redirects)
+   * Useful for detecting which timestamp Wayback Machine actually served
+   */
+  async fetchTextWithFinalUrl(url: string): Promise<{ text: string; finalUrl: string }> {
+    const response = await this.fetch(url);
+    return {
+      text: await response.text(),
+      finalUrl: response.url
+    };
+  }
+
+  /**
    * Build a Wayback URL for a snapshot
    */
   getSnapshotUrl(timestamp: string, url: string): string {

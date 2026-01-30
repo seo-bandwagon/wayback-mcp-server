@@ -113,6 +113,8 @@ export interface SnapshotContentResponse {
   metadata?: SnapshotMetadata;
   textContent?: string;
   rawHtml?: string;
+  requestedTimestamp?: string;
+  note?: string;
 }
 
 // ============================================

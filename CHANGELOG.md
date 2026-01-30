@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-01-30
+
+### Fixed
+
+- `wayback_check_availability` now uses CDX API fallback for older archives
+  - Fixes false negatives for sites like Geocities that exist in CDX but not Availability API
+- `wayback_compare_snapshots` now correctly returns `hasChanges: false` for identical timestamps
+  - Previously returned `hasChanges: true` even when comparing the same snapshot
+- `wayback_get_snapshot_content` now returns the actual snapshot timestamp
+  - Previously echoed back the requested timestamp even when redirected to closest match
+  - Added `requestedTimestamp` and `note` fields when timestamp differs
+
 ## [1.1.0] - 2026-01-30
 
 ### Added
