@@ -1,6 +1,6 @@
 {
   "name": "wayback-mcp-server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Wayback Machine MCP Server for Claude - Historical webpage analysis for SEO",
   "type": "module",
   "main": "dist/index.js",

@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-01-30
+
+### Added
+
+- New `wayback_get_site_urls` tool for site-wide URL discovery
+  - Get all unique URLs archived for a domain or URL prefix
+  - Supports domain, host, prefix, and exact match types
+  - Date range and status code filtering
+  - MIME type filtering (e.g., HTML only)
+  - Subdomain extraction and path structure analysis
+  - Optional capture count aggregation
+- Automatic www/non-www variant checking for availability tools
+  - New `checkWwwVariant` parameter (default: true)
+  - `checkedVariant` field in responses shows which URL was found
+
+### Fixed
+
+- `wayback_bulk_check` no longer crashes with `includeSnapshotCount=true`
+  - Improved error handling with `-1` for failed lookups
+  - Added `snapshotCountErrors` and `snapshotCountNote` fields
+
 ## [1.0.0] - 2024-01-30
 
 ### Added

@@ -7,13 +7,14 @@ MCP server for the Internet Archive's Wayback Machine. Enables AI assistants lik
 
 ## Features
 
-- **Archive Availability Check** - Verify if URLs are archived
+- **Archive Availability Check** - Verify if URLs are archived (with automatic www/non-www variant checking)
 - **Snapshot Listing** - Browse all archived versions with filtering
 - **Content Extraction** - Fetch snapshots with SEO metadata extraction
 - **Snapshot Comparison** - Compare two versions to identify changes
 - **Bulk Operations** - Check multiple URLs efficiently
 - **Changes Timeline** - Visualize content evolution over time
 - **SEO Impact Analysis** - Score changes for SEO impact
+- **Site-Wide URL Discovery** - Get all archived URLs for a domain
 
 ## Quick Start
 
@@ -61,6 +62,7 @@ npm start
 | `wayback_bulk_check` | Check multiple URLs (max 50) |
 | `wayback_get_changes_timeline` | Timeline of content changes |
 | `wayback_analyze_changes` | SEO-focused change analysis |
+| `wayback_get_site_urls` | Get all archived URLs for a domain |
 
 ## Example Usage
 
@@ -70,6 +72,8 @@ Once configured, you can ask Claude:
 - "Show me all snapshots of example.com from 2023"
 - "Compare the homepage from January vs December 2023"
 - "What SEO changes happened on this page between these dates?"
+- "What URLs have been archived for example.com?"
+- "Find all archived blog posts on moz.com"
 
 ## Configuration
 
