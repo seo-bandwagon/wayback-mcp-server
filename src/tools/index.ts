@@ -52,6 +52,10 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
           timestamp: {
             type: 'string',
             description: 'Optional target timestamp (YYYYMMDDhhmmss or YYYY-MM-DD) to find closest snapshot'
+          },
+          checkWwwVariant: {
+            type: 'boolean',
+            description: 'If URL not found, also check www/non-www variant (default: true)'
           }
         },
         required: ['url']
@@ -188,6 +192,10 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
           includeSnapshotCount: {
             type: 'boolean',
             description: 'Include total snapshot count for each URL (slower) - default: false'
+          },
+          checkWwwVariant: {
+            type: 'boolean',
+            description: 'If URL not found, also check www/non-www variant (default: true)'
           }
         },
         required: ['urls']
@@ -357,7 +365,11 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
   handlers.set('wayback_bulk_check', async (args) => {
     try {
       const params = BulkCheckQuerySchema.parse(args);
-      const results = await availabilityApi.checkBulkAvailability(params.urls, params.timestamp);
+      const results = await availabilityApi.checkBulkAvailability(
+        params.urls,
+        params.timestamp,
+        params.checkWwwVariant
+      );
 
       // Build response
       const resultArray = Array.from(results.entries()).map(([url, result]) => ({
@@ -367,17 +379,20 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
           timestamp: result.closestSnapshot.timestamp,
           formattedDate: result.closestSnapshot.formattedDate,
           waybackUrl: result.closestSnapshot.url
-        } : undefined
+        } : undefined,
+        checkedVariant: result.checkedVariant
       }));
 
       // Get snapshot counts if requested
+      let snapshotCountErrors = 0;
       if (params.includeSnapshotCount) {
         for (const item of resultArray) {
           try {
             const count = await cdxApi.getSnapshotCount(item.url);
             (item as Record<string, unknown>).snapshotCount = count;
           } catch {
-            (item as Record<string, unknown>).snapshotCount = 0;
+            (item as Record<string, unknown>).snapshotCount = -1; // -1 indicates error
+            snapshotCountErrors++;
           }
         }
       }
@@ -388,7 +403,7 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
         .map(r => r.closestSnapshot!.timestamp)
         .sort();
 
-      const response = {
+      const response: Record<string, unknown> = {
         totalUrls: params.urls.length,
         archivedCount,
         notArchivedCount: params.urls.length - archivedCount,
@@ -399,6 +414,12 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
           newestSnapshot: timestamps[timestamps.length - 1] || 'N/A'
         }
       };
+
+      // Add error info if any snapshot counts failed
+      if (snapshotCountErrors > 0) {
+        response.snapshotCountErrors = snapshotCountErrors;
+        response.snapshotCountNote = `${snapshotCountErrors} URL(s) could not retrieve snapshot counts due to rate limiting or errors. Values of -1 indicate unknown counts.`;
+      }
 
       return JSON.stringify(response, null, 2);
     } catch (error) {

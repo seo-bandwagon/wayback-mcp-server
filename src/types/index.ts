@@ -6,7 +6,8 @@ import { z } from 'zod';
 
 export const AvailabilityQuerySchema = z.object({
   url: z.string().url(),
-  timestamp: z.string().optional()
+  timestamp: z.string().optional(),
+  checkWwwVariant: z.boolean().optional().default(true)
 });
 
 export type AvailabilityQuery = z.infer<typeof AvailabilityQuerySchema>;
@@ -21,6 +22,7 @@ export interface AvailabilityResponse {
     status: string;
   };
   archiveOrgUrl: string;
+  checkedVariant?: string;
 }
 
 // ============================================
@@ -200,7 +202,8 @@ export interface CompareSnapshotsResponse {
 export const BulkCheckQuerySchema = z.object({
   urls: z.array(z.string()).min(1).max(50),
   timestamp: z.string().optional(),
-  includeSnapshotCount: z.boolean().optional().default(false)
+  includeSnapshotCount: z.boolean().optional().default(false),
+  checkWwwVariant: z.boolean().optional().default(true)
 });
 
 export type BulkCheckQuery = z.infer<typeof BulkCheckQuerySchema>;
@@ -214,6 +217,7 @@ export interface BulkCheckResult {
     waybackUrl: string;
   };
   snapshotCount?: number;
+  checkedVariant?: string;
   error?: string;
 }
 
