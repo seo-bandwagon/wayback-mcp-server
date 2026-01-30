@@ -144,5 +144,6 @@ export const CACHE_TTL = {
   SNAPSHOTS: 86400,          // 24 hours - historical snapshot list is stable
   SNAPSHOT_CONTENT: 604800,  // 7 days - archived content is immutable
   CDX_QUERIES: 43200,        // 12 hours - snapshot lists rarely change
-  BULK_CHECK: 3600           // 1 hour - for bulk availability checks
+  BULK_CHECK: 3600,          // 1 hour - for bulk availability checks
+  SITE_URLS: 43200           // 12 hours - same as other CDX queries
 };

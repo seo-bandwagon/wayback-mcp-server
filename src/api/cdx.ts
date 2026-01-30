@@ -9,7 +9,10 @@ import type {
   ChangesTimelineQuery,
   ChangesTimelineResponse,
   ChangeEvent,
-  ChangeFrequency
+  ChangeFrequency,
+  SiteUrlsQuery,
+  SiteUrlsResponse,
+  SiteUrl
 } from '../types/index.js';
 
 export class CdxApi {
@@ -334,5 +337,313 @@ export class CdxApi {
     if (avgDays < 90) return 'moderate';
     if (avgDays < 180) return 'infrequent';
     return 'rare';
+  }
+
+  /**
+   * Get all unique URLs archived for a domain or URL prefix
+   */
+  async getSiteUrls(params: SiteUrlsQuery): Promise<SiteUrlsResponse> {
+    const cache = this.client.getCache();
+    const cacheKey = cache.generateKey('site-urls', params);
+
+    const cached = cache.get<SiteUrlsResponse>(cacheKey);
+    if (cached) return cached;
+
+    // Normalize URL - strip protocol
+    const normalizedUrl = this.normalizeUrlForCdx(params.url);
+
+    // Build CDX API URL
+    const url = new URL(this.client.CDX_API);
+    url.searchParams.set('url', normalizedUrl);
+    url.searchParams.set('output', 'json');
+    url.searchParams.set('fl', 'original,timestamp,statuscode,mimetype,digest');
+
+    // Set matchType
+    if (params.matchType) {
+      url.searchParams.set('matchType', params.matchType);
+    }
+
+    // Date range filters
+    if (params.from) {
+      url.searchParams.set('from', normalizeTimestamp(params.from));
+    }
+    if (params.to) {
+      url.searchParams.set('to', normalizeTimestamp(params.to));
+    }
+
+    // Build filters array
+    const filters: string[] = [];
+
+    // Status filter
+    if (params.statusFilter && params.statusFilter !== 'all') {
+      const statusFilterValue = params.statusFilter === '200'
+        ? 'statuscode:200'
+        : `statuscode:${params.statusFilter.replace('xx', '..')}`;
+      filters.push(statusFilterValue);
+    }
+
+    // MIME type filter
+    if (params.mimeTypeFilter) {
+      filters.push(`mimetype:${params.mimeTypeFilter}`);
+    }
+
+    // Apply filters
+    for (const filter of filters) {
+      url.searchParams.append('filter', filter);
+    }
+
+    // Collapse strategy: use urlkey for unique URLs when not counting captures
+    if (!params.includeCaptureCounts) {
+      url.searchParams.set('collapse', 'urlkey');
+    }
+
+    // Request resumeKey to detect truncation
+    url.searchParams.set('showResumeKey', 'true');
+
+    // Limit - request more if we need to aggregate
+    const requestLimit = params.includeCaptureCounts
+      ? Math.min((params.limit || 1000) * 10, 100000) // Request more for aggregation
+      : Math.min(params.limit || 1000, 10000);
+    url.searchParams.set('limit', String(requestLimit));
+
+    // Fetch
+    const result = await this.client.withRetry(async () => {
+      const response = await this.client.fetch(url.toString());
+      const text = await response.text();
+
+      if (!text.trim()) {
+        return [];
+      }
+
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw new WaybackApiError({
+          code: ERROR_CODES.PARSE_ERROR,
+          message: 'Failed to parse CDX response'
+        });
+      }
+    }, 'cdx');
+
+    // Check for resumeKey in response (indicates truncation)
+    let resumeKey: string | undefined;
+    let rows: string[][] = [];
+
+    if (Array.isArray(result) && result.length > 0) {
+      // Check if last element is resumeKey array
+      const lastRow = result[result.length - 1];
+      if (Array.isArray(lastRow) && lastRow.length === 2 && lastRow[0] === '') {
+        resumeKey = lastRow[1];
+        rows = result.slice(1, -1) as string[][];
+      } else {
+        rows = result.slice(1) as string[][];
+      }
+    }
+
+    // Process results based on includeCaptureCounts
+    let siteUrls: SiteUrl[];
+    let totalCaptures: number;
+
+    if (params.includeCaptureCounts) {
+      // Aggregate by URL
+      const urlAggregation = this.aggregateByUrl(rows);
+      siteUrls = urlAggregation.urls;
+      totalCaptures = urlAggregation.totalCaptures;
+
+      // Apply limit after aggregation
+      if (params.limit && siteUrls.length > params.limit) {
+        siteUrls = siteUrls.slice(0, params.limit);
+      }
+    } else {
+      // Each row is already unique URL due to collapse=urlkey
+      siteUrls = rows.map(row => ({
+        url: row[0],
+        firstCapture: row[1],
+        lastCapture: row[1], // Same as first when collapsed
+        captureCount: 1, // Unknown when collapsed
+        statusCode: row[2] || '200',
+        mimeType: row[3] || 'text/html'
+      }));
+      totalCaptures = rows.length;
+
+      // Apply limit
+      if (params.limit && siteUrls.length > params.limit) {
+        siteUrls = siteUrls.slice(0, params.limit);
+      }
+    }
+
+    // Extract subdomains if matchType is domain
+    const subdomains = params.matchType === 'domain'
+      ? this.extractSubdomains(siteUrls.map(u => u.url), normalizedUrl)
+      : [];
+
+    // Filter out subdomains if includeSubdomains is false
+    if (params.matchType === 'domain' && !params.includeSubdomains) {
+      const baseDomain = normalizedUrl.replace(/^www\./, '');
+      siteUrls = siteUrls.filter(u => {
+        try {
+          const host = new URL(u.url.startsWith('http') ? u.url : `https://${u.url}`).hostname;
+          return host === baseDomain || host === `www.${baseDomain}`;
+        } catch {
+          return true;
+        }
+      });
+    }
+
+    // Analyze path structure
+    const pathStructure = this.analyzePathStructure(siteUrls.map(u => u.url));
+
+    // Summarize MIME types
+    const mimeTypeSummary = this.summarizeMimeTypes(siteUrls);
+
+    const response: SiteUrlsResponse = {
+      url: params.url,
+      matchType: params.matchType || 'domain',
+      dateRange: {
+        from: params.from || '',
+        to: params.to || '',
+        specified: !!(params.from || params.to)
+      },
+      totalUrls: siteUrls.length,
+      totalCaptures,
+      urls: siteUrls,
+      subdomains,
+      pathStructure,
+      mimeTypeSummary,
+      truncated: !!resumeKey,
+      resumeKey
+    };
+
+    cache.set(cacheKey, response, CACHE_TTL.SITE_URLS);
+
+    return response;
+  }
+
+  /**
+   * Normalize URL for CDX API (strip protocol)
+   */
+  private normalizeUrlForCdx(url: string): string {
+    let normalized = url.replace(/^https?:\/\//, '');
+    normalized = normalized.replace(/\/$/, '');
+    return normalized;
+  }
+
+  /**
+   * Aggregate CDX rows by URL to get capture counts
+   */
+  private aggregateByUrl(rows: string[][]): { urls: SiteUrl[]; totalCaptures: number } {
+    interface UrlAggregation {
+      timestamps: string[];
+      statusCode: string;
+      mimeType: string;
+    }
+
+    const urlMap = new Map<string, UrlAggregation>();
+
+    for (const row of rows) {
+      const [original, timestamp, statuscode, mimetype] = row;
+      if (!urlMap.has(original)) {
+        urlMap.set(original, {
+          timestamps: [],
+          statusCode: statuscode || '200',
+          mimeType: mimetype || 'text/html'
+        });
+      }
+      urlMap.get(original)!.timestamps.push(timestamp);
+    }
+
+    const urls: SiteUrl[] = [];
+    let totalCaptures = 0;
+
+    for (const [url, agg] of urlMap) {
+      agg.timestamps.sort();
+      totalCaptures += agg.timestamps.length;
+      urls.push({
+        url,
+        firstCapture: agg.timestamps[0],
+        lastCapture: agg.timestamps[agg.timestamps.length - 1],
+        captureCount: agg.timestamps.length,
+        statusCode: agg.statusCode,
+        mimeType: agg.mimeType
+      });
+    }
+
+    // Sort by capture count (most captured first)
+    urls.sort((a, b) => b.captureCount - a.captureCount);
+
+    return { urls, totalCaptures };
+  }
+
+  /**
+   * Extract unique subdomains from URLs
+   */
+  private extractSubdomains(urls: string[], baseDomain: string): string[] {
+    const subdomains = new Set<string>();
+    const normalizedBase = baseDomain.replace(/^www\./, '');
+
+    for (const urlStr of urls) {
+      try {
+        const url = new URL(urlStr.startsWith('http') ? urlStr : `https://${urlStr}`);
+        const host = url.hostname;
+
+        if (host === normalizedBase) {
+          continue; // Root domain
+        }
+
+        if (host.endsWith('.' + normalizedBase)) {
+          const subdomain = host.slice(0, -(normalizedBase.length + 1));
+          // Handle nested subdomains (e.g., "a.b" from "a.b.example.com")
+          const parts = subdomain.split('.');
+          subdomains.add(parts[parts.length - 1]); // Add the immediate subdomain
+        }
+      } catch {
+        // Skip invalid URLs
+      }
+    }
+
+    return Array.from(subdomains).sort();
+  }
+
+  /**
+   * Analyze path structure from URLs
+   */
+  private analyzePathStructure(urls: string[]): Record<string, number> {
+    const structure: Record<string, number> = {};
+
+    for (const urlStr of urls) {
+      try {
+        const url = new URL(urlStr.startsWith('http') ? urlStr : `https://${urlStr}`);
+        const pathParts = url.pathname.split('/').filter(Boolean);
+        const topPath = pathParts.length > 0 ? `/${pathParts[0]}/` : '/';
+        structure[topPath] = (structure[topPath] || 0) + 1;
+      } catch {
+        structure['/'] = (structure['/'] || 0) + 1;
+      }
+    }
+
+    // Sort by count descending
+    const sorted = Object.entries(structure)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 20); // Top 20 paths
+
+    return Object.fromEntries(sorted);
+  }
+
+  /**
+   * Summarize MIME types from URLs
+   */
+  private summarizeMimeTypes(urls: SiteUrl[]): Record<string, number> {
+    const summary: Record<string, number> = {};
+
+    for (const url of urls) {
+      const mimeType = url.mimeType || 'unknown';
+      summary[mimeType] = (summary[mimeType] || 0) + 1;
+    }
+
+    // Sort by count descending
+    const sorted = Object.entries(summary)
+      .sort((a, b) => b[1] - a[1]);
+
+    return Object.fromEntries(sorted);
   }
 }

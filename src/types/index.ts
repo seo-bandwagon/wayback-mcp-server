@@ -349,6 +349,51 @@ export interface AnalyzeChangesResponse {
 }
 
 // ============================================
+// Site URLs Types
+// ============================================
+
+export const SiteUrlsQuerySchema = z.object({
+  url: z.string(),
+  matchType: MatchTypeSchema.optional().default('domain'),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  statusFilter: StatusFilterSchema.optional().default('200'),
+  limit: z.number().min(1).max(10000).optional().default(1000),
+  includeSubdomains: z.boolean().optional().default(true),
+  includeCaptureCounts: z.boolean().optional().default(false),
+  mimeTypeFilter: z.string().optional()
+});
+
+export type SiteUrlsQuery = z.infer<typeof SiteUrlsQuerySchema>;
+
+export interface SiteUrl {
+  url: string;
+  firstCapture: string;
+  lastCapture: string;
+  captureCount: number;
+  statusCode: string;
+  mimeType: string;
+}
+
+export interface SiteUrlsResponse {
+  url: string;
+  matchType: string;
+  dateRange: {
+    from: string;
+    to: string;
+    specified: boolean;
+  };
+  totalUrls: number;
+  totalCaptures: number;
+  urls: SiteUrl[];
+  subdomains: string[];
+  pathStructure: Record<string, number>;
+  mimeTypeSummary: Record<string, number>;
+  truncated?: boolean;
+  resumeKey?: string;
+}
+
+// ============================================
 // Error Types
 // ============================================
 

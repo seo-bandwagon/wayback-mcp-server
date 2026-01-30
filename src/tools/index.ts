@@ -11,7 +11,8 @@ import {
   CompareSnapshotsQuerySchema,
   BulkCheckQuerySchema,
   ChangesTimelineQuerySchema,
-  AnalyzeChangesQuerySchema
+  AnalyzeChangesQuerySchema,
+  SiteUrlsQuerySchema
 } from '../types/index.js';
 
 export interface Tool {
@@ -253,6 +254,56 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
         },
         required: ['url', 'beforeDate', 'afterDate']
       }
+    },
+
+    // 8. Get Site URLs
+    {
+      name: 'wayback_get_site_urls',
+      description: 'Get all unique URLs archived for a domain or URL prefix. Useful for discovering site structure, finding removed pages, and conducting site-wide SEO audits.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: {
+            type: 'string',
+            description: 'Domain or URL prefix (e.g., "example.com" or "example.com/blog/")'
+          },
+          matchType: {
+            type: 'string',
+            enum: ['exact', 'prefix', 'host', 'domain'],
+            description: 'Scope of search: "domain" (default, includes all subdomains), "host" (single host), "prefix" (URL path prefix), "exact" (single URL)'
+          },
+          from: {
+            type: 'string',
+            description: 'Start date filter (YYYY-MM-DD or YYYYMMDDhhmmss)'
+          },
+          to: {
+            type: 'string',
+            description: 'End date filter (YYYY-MM-DD or YYYYMMDDhhmmss)'
+          },
+          statusFilter: {
+            type: 'string',
+            enum: ['200', '2xx', '3xx', '4xx', '5xx', 'all'],
+            description: 'Filter by HTTP status code (default: 200)'
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum URLs to return (1-10000, default: 1000)'
+          },
+          includeSubdomains: {
+            type: 'boolean',
+            description: 'Include subdomains when matchType is "domain" (default: true)'
+          },
+          includeCaptureCounts: {
+            type: 'boolean',
+            description: 'Include capture count per URL - slower but shows first/last capture dates (default: false)'
+          },
+          mimeTypeFilter: {
+            type: 'string',
+            description: 'Filter by MIME type (e.g., "text/html" to exclude images/css/js)'
+          }
+        },
+        required: ['url']
+      }
     }
   ];
 
@@ -371,6 +422,17 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
     try {
       const params = AnalyzeChangesQuerySchema.parse(args);
       const result = await diffService.analyzeChanges(params);
+      return JSON.stringify(result, null, 2);
+    } catch (error) {
+      return handleToolError(error);
+    }
+  });
+
+  // 8. Get Site URLs
+  handlers.set('wayback_get_site_urls', async (args) => {
+    try {
+      const params = SiteUrlsQuerySchema.parse(args);
+      const result = await cdxApi.getSiteUrls(params);
       return JSON.stringify(result, null, 2);
     } catch (error) {
       return handleToolError(error);
