@@ -1,0 +1,55 @@
+{
+  "name": "wayback-mcp-server",
+  "version": "1.0.0",
+  "description": "Wayback Machine MCP Server for Claude - Historical webpage analysis for SEO",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "wayback-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "npx tsc",
+    "start": "node dist/index.js",
+    "dev": "npx tsc --watch"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "wayback-machine",
+    "internet-archive",
+    "seo",
+    "claude",
+    "anthropic",
+    "web-archive",
+    "historical-data"
+  ],
+  "author": "Kyle Alm <keeepkalm@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/seo-bandwagon/wayback-mcp-server.git"
+  },
+  "homepage": "https://github.com/seo-bandwagon/wayback-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/seo-bandwagon/wayback-mcp-server/issues"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "cheerio": "^1.0.0-rc.12",
+    "diff": "^5.1.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/diff": "^5.0.8",
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
