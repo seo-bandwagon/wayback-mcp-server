@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.seo-bandwagon/wayback",
+  "description": "Wayback Machine MCP Server - Access Internet Archive's historical web snapshots for SEO analysis, content research, and tracking website changes over time",
+  "repository": {
+    "url": "https://github.com/seo-bandwagon/wayback-mcp-server",
+    "source": "github"
+  },
+  "version": "1.1.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "wayback-mcp-server",
+      "version": "1.1.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
