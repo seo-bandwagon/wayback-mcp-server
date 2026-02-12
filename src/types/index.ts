@@ -367,7 +367,8 @@ export const SiteUrlsQuerySchema = z.object({
   limit: z.number().min(1).max(10000).optional().default(1000),
   includeSubdomains: z.boolean().optional().default(true),
   includeCaptureCounts: z.boolean().optional().default(false),
-  mimeTypeFilter: z.string().optional()
+  mimeTypeFilter: z.string().optional(),
+  sortBy: z.enum(["urlkey", "oldest", "newest", "captures"]).optional().default("urlkey")
 });
 
 export type SiteUrlsQuery = z.infer<typeof SiteUrlsQuerySchema>;

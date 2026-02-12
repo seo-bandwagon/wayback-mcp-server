@@ -472,6 +472,22 @@ export class CdxApi {
       }
     }
 
+    // Sort results based on sortBy parameter
+    if (params.sortBy) {
+      switch (params.sortBy) {
+        case 'oldest':
+          siteUrls.sort((a, b) => a.firstCapture.localeCompare(b.firstCapture));
+          break;
+        case 'newest':
+          siteUrls.sort((a, b) => b.lastCapture.localeCompare(a.lastCapture));
+          break;
+        case 'captures':
+          siteUrls.sort((a, b) => b.captureCount - a.captureCount);
+          break;
+        // 'urlkey' is default CDX order, no sort needed
+      }
+    }
+
     // Extract subdomains if matchType is domain
     const subdomains = params.matchType === 'domain'
       ? this.extractSubdomains(siteUrls.map(u => u.url), normalizedUrl)
