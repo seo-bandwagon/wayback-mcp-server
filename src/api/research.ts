@@ -22,6 +22,7 @@ export interface ResearchParams {
   pathPrefix?: string;
   limit?: number;
   processLimit?: number;
+  fromYear?: number;  // Start from a specific year (default: 1996)
 }
 
 export interface ProcessedUrl {
@@ -47,12 +48,12 @@ export interface ResearchResult {
   externalDomains: string[];
   findings: Finding[];
   pathPrefix?: string;
+  notes: string[];
 }
 
 // Helper to parse URL - handles both browser and Node environments
 function parseUrl(urlStr: string, base?: string): { hostname: string; href: string } | null {
   try {
-    // Try using global URL (works in both environments)
     const url = base ? new (globalThis.URL || URL)(urlStr, base) : new (globalThis.URL || URL)(urlStr);
     return { hostname: url.hostname, href: url.href };
   } catch {
@@ -60,17 +61,21 @@ function parseUrl(urlStr: string, base?: string): { hostname: string; href: stri
   }
 }
 
-// Helper for delay
+// Helper for delay - respects rate limits per IA guidelines
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => {
     if (typeof globalThis.setTimeout !== 'undefined') {
       globalThis.setTimeout(resolve, ms);
     } else {
-      // Fallback - just resolve immediately
       resolve();
     }
   });
 }
+
+// Minimum delay between content fetches (per IA rate limit guidelines)
+const CONTENT_FETCH_DELAY_MS = 500;
+// Minimum delay between CDX queries
+const CDX_QUERY_DELAY_MS = 200;
 
 export class ResearchApi {
   private client: WaybackClient;
@@ -87,11 +92,9 @@ export class ResearchApi {
    * Extract links from an archived page
    */
   async extractLinks(params: ExtractLinksParams): Promise<ExtractLinksResult> {
-    // Get the snapshot content
     let timestamp = params.timestamp;
     
     if (!timestamp) {
-      // Get latest snapshot using the schema to apply defaults
       const snapshotParams = SnapshotsQuerySchema.parse({
         url: params.url,
         matchType: 'exact',
@@ -111,7 +114,6 @@ export class ResearchApi {
       timestamp = snapshots.snapshots[0].timestamp;
     }
 
-    // Fetch the content using schema to apply defaults
     const contentParams = SnapshotContentQuerySchema.parse({
       url: params.url,
       timestamp,
@@ -120,10 +122,8 @@ export class ResearchApi {
     });
     
     const content = await this.snapshotsApi.getSnapshotContent(contentParams);
-
     const html = content.rawHtml || '';
     
-    // Extract links
     const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>/gi;
     const links = new Set<string>();
     const externalDomains = new Set<string>();
@@ -136,12 +136,10 @@ export class ResearchApi {
     while ((match = linkRegex.exec(html)) !== null) {
       const href = match[1];
 
-      // Skip anchors, javascript, mailto
       if (href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:')) {
         continue;
       }
 
-      // Handle relative URLs
       const absoluteUrl = parseUrl(href, params.url);
       if (absoluteUrl) {
         const linkDomain = absoluteUrl.hostname.replace(/^www\./, '');
@@ -167,28 +165,38 @@ export class ResearchApi {
 
   /**
    * Research a domain systematically
+   * 
+   * Note: This fetches URLs and sorts by timestamp client-side.
+   * For very large domains, this may not capture all oldest URLs due to CDX API limits.
+   * The CDX API returns results in SURT (URL) order, not timestamp order.
+   * Use fromYear parameter to focus on a specific time period if needed.
    */
   async researchDomain(params: ResearchParams): Promise<ResearchResult> {
     const domain = params.domain.replace(/^https?:\/\//, '').replace(/\/$/, '');
-    const limit = params.limit || 100;
-    const processLimit = params.processLimit || 20;
+    const limit = Math.min(params.limit || 100, 1000); // Cap at 1000 for reasonable response time
+    const processLimit = Math.min(params.processLimit || 20, 50); // Cap processing
+    const fromYear = params.fromYear || 1996; // Wayback Machine started 1996
+    
+    const notes: string[] = [];
 
-    // Step 1: Get all text URLs, sorted oldest first
+    // Build URL pattern
     const urlPattern = params.pathPrefix 
       ? `${domain}${params.pathPrefix}`
       : domain;
 
-    // Use schema to apply defaults
+    // Step 1: Get URLs with date filter to focus on older content
+    // We use from= to start from an old date, which helps find early captures
     const siteUrlParams = SiteUrlsQuerySchema.parse({
       url: urlPattern,
       matchType: params.pathPrefix ? 'prefix' : 'domain',
       mimeTypeFilter: 'text/html',
       statusFilter: '200',
-      sortBy: 'oldest',
-      limit,
-      includeCaptureCounts: false
+      from: `${fromYear}0101`,
+      limit: limit * 2, // Fetch more to allow for sorting
+      includeCaptureCounts: true // Get first/last capture dates for sorting
     });
 
+    await delay(CDX_QUERY_DELAY_MS);
     const siteUrls = await this.cdxApi.getSiteUrls(siteUrlParams);
 
     if (siteUrls.urls.length === 0) {
@@ -199,24 +207,41 @@ export class ResearchApi {
         urls: [],
         externalDomains: [],
         findings: [],
-        pathPrefix: params.pathPrefix
+        pathPrefix: params.pathPrefix,
+        notes: ['No archived URLs found for this domain/path']
       };
     }
+
+    // Sort by firstCapture timestamp (oldest first)
+    const sortedUrls = [...siteUrls.urls].sort((a, b) => 
+      a.firstCapture.localeCompare(b.firstCapture)
+    );
+
+    // Take only the requested limit after sorting
+    const urlsToProcess = sortedUrls.slice(0, limit);
+
+    if (siteUrls.truncated) {
+      notes.push(`Results were truncated. Total URLs may exceed ${siteUrls.urls.length}. Use pathPrefix to narrow scope.`);
+    }
+
+    notes.push(`Found ${siteUrls.urls.length} URLs, sorted by oldest first, processing ${Math.min(urlsToProcess.length, processLimit)}`);
 
     // Step 2: Process URLs and extract info
     const processedUrls: ProcessedUrl[] = [];
     const allExternalDomains = new Set<string>();
     const findings: Finding[] = [];
 
-    const toProcess = Math.min(siteUrls.urls.length, processLimit);
+    const toProcess = Math.min(urlsToProcess.length, processLimit);
 
     for (let i = 0; i < toProcess; i++) {
-      const item = siteUrls.urls[i];
+      const item = urlsToProcess[i];
       const url = item.url;
       const timestamp = item.firstCapture;
 
       try {
-        // Get content using schema to apply defaults
+        // Rate limit: delay between content fetches per IA guidelines
+        await delay(CONTENT_FETCH_DELAY_MS);
+        
         const contentParams = SnapshotContentQuerySchema.parse({
           url,
           timestamp,
@@ -225,10 +250,9 @@ export class ResearchApi {
         });
         
         const content = await this.snapshotsApi.getSnapshotContent(contentParams);
-
         const html = content.rawHtml || '';
 
-        // Extract links
+        // Extract external links
         const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>/gi;
         let match;
         while ((match = linkRegex.exec(html)) !== null) {
@@ -237,7 +261,7 @@ export class ResearchApi {
             const sourceUrl = parseUrl(url);
             const sourceDomain = sourceUrl ? sourceUrl.hostname.replace(/^www\./, '') : '';
             const linkDomain = absoluteUrl.hostname.replace(/^www\./, '');
-            if (linkDomain !== sourceDomain && !linkDomain.includes('archive.org')) {
+            if (linkDomain && linkDomain !== sourceDomain && !linkDomain.includes('archive.org')) {
               allExternalDomains.add(linkDomain);
             }
           }
@@ -255,28 +279,25 @@ export class ResearchApi {
         const lowerHtml = html.toLowerCase();
         const title = content.metadata?.title || null;
 
-        if (lowerHtml.includes('announcement') || lowerHtml.includes('press release')) {
+        if (lowerHtml.includes('press release') || lowerHtml.includes('news release')) {
           findings.push({ type: 'announcement', url, timestamp, title });
         }
-        if (lowerHtml.includes('careers') || lowerHtml.includes('job opening') || lowerHtml.includes("we're hiring")) {
+        if (lowerHtml.includes('careers') || lowerHtml.includes('job opening') || lowerHtml.includes("we're hiring") || lowerHtml.includes('employment')) {
           findings.push({ type: 'jobs', url, timestamp, title });
         }
-        if (lowerHtml.includes('partnership') || lowerHtml.includes('agreement')) {
+        if (lowerHtml.includes('partnership') || lowerHtml.includes('strategic alliance')) {
           findings.push({ type: 'partnership', url, timestamp, title });
         }
-        if (lowerHtml.includes('acquisition') || lowerHtml.includes('acquired')) {
+        if (lowerHtml.includes('acquisition') || lowerHtml.includes('acquired') || lowerHtml.includes('merger')) {
           findings.push({ type: 'acquisition', url, timestamp, title });
         }
-        if (lowerHtml.includes('new product') || lowerHtml.includes('launch') || lowerHtml.includes('introducing')) {
+        if (lowerHtml.includes('announces') || lowerHtml.includes('introducing') || lowerHtml.includes('now available')) {
           findings.push({ type: 'product', url, timestamp, title });
         }
 
       } catch {
-        // Skip failed URLs
+        // Skip failed URLs - may be unavailable or rate limited
       }
-
-      // Rate limiting - small delay between requests
-      await delay(100);
     }
 
     return {
@@ -286,7 +307,8 @@ export class ResearchApi {
       urls: processedUrls,
       externalDomains: Array.from(allExternalDomains).sort(),
       findings,
-      pathPrefix: params.pathPrefix
+      pathPrefix: params.pathPrefix,
+      notes
     };
   }
 }

@@ -28,8 +28,9 @@ const ExtractLinksSchema = z.object({
 const ResearchDomainSchema = z.object({
   domain: z.string(),
   pathPrefix: z.string().optional(),
+  fromYear: z.number().min(1996).max(2030).optional().default(1996),
   limit: z.number().min(1).max(1000).optional().default(100),
-  processLimit: z.number().min(1).max(100).optional().default(20)
+  processLimit: z.number().min(1).max(50).optional().default(20)
 });
 
 export interface Tool {
@@ -330,7 +331,7 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
           sortBy: {
             type: 'string',
             enum: ['urlkey', 'oldest', 'newest', 'captures'],
-            description: 'Sort order: urlkey (default, alphabetical), oldest (first archived), newest (most recently archived), captures (most captured)'
+            description: 'Sort order (client-side, after fetching): urlkey (default, CDX native order), oldest (by first capture date), newest (by last capture date), captures (by capture count). Note: CDX API returns results in urlkey order; sorting is applied after fetching up to limit results.'
           }
         },
         required: ['url']
@@ -364,7 +365,7 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
     // 10. Research Domain
     {
       name: 'wayback_research_domain',
-      description: 'Systematic domain research workflow: fetches archived URLs (oldest first, text/html only), extracts content and metadata, finds external domains to research next, and flags interesting findings (announcements, job posts, partnerships).',
+      description: 'Systematic domain research workflow. Fetches archived URLs, sorts by oldest first (client-side), extracts content/metadata, finds external domains to research next, and flags findings (announcements, jobs, partnerships). Note: CDX API returns URLs in alphabetical order; sorting by date is done after fetching. For large domains, use pathPrefix to narrow scope.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -374,15 +375,19 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
           },
           pathPrefix: {
             type: 'string',
-            description: 'Filter by URL path prefix (e.g., "/news/" for large sites)'
+            description: 'Filter by URL path prefix (e.g., "/news/") - recommended for large sites'
+          },
+          fromYear: {
+            type: 'number',
+            description: 'Start from a specific year (default: 1996). Use to focus on a time period.'
           },
           limit: {
             type: 'number',
-            description: 'Maximum URLs to fetch (default: 100)'
+            description: 'Maximum URLs to fetch before sorting (default: 100, max: 1000)'
           },
           processLimit: {
             type: 'number',
-            description: 'Maximum URLs to process for content extraction (default: 20)'
+            description: 'Maximum URLs to process for content extraction (default: 20, max: 50)'
           }
         },
         required: ['domain']
