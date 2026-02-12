@@ -3,6 +3,7 @@ import { AvailabilityApi } from '../api/availability.js';
 import { CdxApi } from '../api/cdx.js';
 import { SnapshotsApi } from '../api/snapshots.js';
 import { DiffService } from '../api/diff.js';
+import { ResearchApi } from '../api/research.js';
 import { handleToolError } from '../utils/errors.js';
 import {
   AvailabilityQuerySchema,
@@ -14,6 +15,23 @@ import {
   AnalyzeChangesQuerySchema,
   SiteUrlsQuerySchema
 } from '../types/index.js';
+import { z } from 'zod';
+
+// Schema for extract links
+const ExtractLinksSchema = z.object({
+  url: z.string(),
+  timestamp: z.string().optional(),
+  includeInternal: z.boolean().optional().default(false)
+});
+
+// Schema for research domain
+const ResearchDomainSchema = z.object({
+  domain: z.string(),
+  pathPrefix: z.string().optional(),
+  fromYear: z.number().min(1996).max(2030).optional().default(1996),
+  limit: z.number().min(1).max(1000).optional().default(100),
+  processLimit: z.number().min(1).max(50).optional().default(20)
+});
 
 export interface Tool {
   name: string;
@@ -34,6 +52,7 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
   const cdxApi = new CdxApi(client);
   const snapshotsApi = new SnapshotsApi(client);
   const diffService = new DiffService(client);
+  const researchApi = new ResearchApi(client);
 
   const handlers = new Map<string, ToolHandler>();
 
@@ -308,9 +327,70 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
           mimeTypeFilter: {
             type: 'string',
             description: 'Filter by MIME type (e.g., "text/html" to exclude images/css/js)'
+          },
+          sortBy: {
+            type: 'string',
+            enum: ['urlkey', 'oldest', 'newest', 'captures'],
+            description: 'Sort order (client-side, after fetching): urlkey (default, CDX native order), oldest (by first capture date), newest (by last capture date), captures (by capture count). Note: CDX API returns results in urlkey order; sorting is applied after fetching up to limit results.'
           }
         },
         required: ['url']
+      }
+    },
+
+    // 9. Extract Links
+    {
+      name: 'wayback_extract_links',
+      description: 'Extract all outbound links from an archived page. Returns external domains found, useful for discovering related sites to research.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: {
+            type: 'string',
+            description: 'The URL to extract links from'
+          },
+          timestamp: {
+            type: 'string',
+            description: 'Snapshot timestamp (YYYYMMDDhhmmss). If not provided, uses latest snapshot.'
+          },
+          includeInternal: {
+            type: 'boolean',
+            description: 'Include internal links (same domain) - default: false'
+          }
+        },
+        required: ['url']
+      }
+    },
+
+    // 10. Research Domain
+    {
+      name: 'wayback_research_domain',
+      description: 'Systematic domain research workflow. Fetches archived URLs, sorts by oldest first (client-side), extracts content/metadata, finds external domains to research next, and flags findings (announcements, jobs, partnerships). Note: CDX API returns URLs in alphabetical order; sorting by date is done after fetching. For large domains, use pathPrefix to narrow scope.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          domain: {
+            type: 'string',
+            description: 'Domain to research (e.g., "zenimax.com")'
+          },
+          pathPrefix: {
+            type: 'string',
+            description: 'Filter by URL path prefix (e.g., "/news/") - recommended for large sites'
+          },
+          fromYear: {
+            type: 'number',
+            description: 'Start from a specific year (default: 1996). Use to focus on a time period.'
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum URLs to fetch before sorting (default: 100, max: 1000)'
+          },
+          processLimit: {
+            type: 'number',
+            description: 'Maximum URLs to process for content extraction (default: 20, max: 50)'
+          }
+        },
+        required: ['domain']
       }
     }
   ];
@@ -454,6 +534,28 @@ export function createTools(client: WaybackClient): { tools: Tool[]; handlers: M
     try {
       const params = SiteUrlsQuerySchema.parse(args);
       const result = await cdxApi.getSiteUrls(params);
+      return JSON.stringify(result, null, 2);
+    } catch (error) {
+      return handleToolError(error);
+    }
+  });
+
+  // 9. Extract Links
+  handlers.set('wayback_extract_links', async (args) => {
+    try {
+      const params = ExtractLinksSchema.parse(args);
+      const result = await researchApi.extractLinks(params);
+      return JSON.stringify(result, null, 2);
+    } catch (error) {
+      return handleToolError(error);
+    }
+  });
+
+  // 10. Research Domain
+  handlers.set('wayback_research_domain', async (args) => {
+    try {
+      const params = ResearchDomainSchema.parse(args);
+      const result = await researchApi.researchDomain(params);
       return JSON.stringify(result, null, 2);
     } catch (error) {
       return handleToolError(error);

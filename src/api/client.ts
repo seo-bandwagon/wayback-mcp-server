@@ -58,7 +58,11 @@ export class WaybackClient {
 
           // Rate limit (429) or Service Unavailable (503) - wait and retry
           if (status === 429 || status === 503) {
-            const waitTime = Math.pow(2, attempt) * 2000;
+            // Honor Retry-After header if present, otherwise exponential backoff
+            const retryAfterSecs = this.getRetryAfter(error);
+            const waitTime = retryAfterSecs 
+              ? retryAfterSecs * 1000 
+              : Math.pow(2, attempt) * 2000;
             console.error(`Rate limited/unavailable (${status}). Waiting ${waitTime}ms...`);
             await this.sleep(waitTime);
             continue;
@@ -105,20 +109,29 @@ export class WaybackClient {
   }
 
   /**
-   * Fetch with proper User-Agent header
+   * Fetch with proper User-Agent header per Internet Archive requirements
+   * See: https://archive.org/developers/bots.html
    */
   async fetch(url: string, options: RequestInit = {}): Promise<Response> {
     const response = await fetch(url, {
       ...options,
       headers: {
-        'User-Agent': 'WaybackMCP/1.0 (SEO Analysis Tool; MCP Server)',
+        // User-Agent format: ToolName/Version (description; contact)
+        // Per IA requirements: include tool name, version, and purpose
+        'User-Agent': 'wayback-mcp-server/1.1.1 (MCP Server for Claude; SEO research; https://github.com/seo-bandwagon/wayback-mcp-server)',
         'Accept': 'application/json, text/html, */*',
         ...options.headers
       }
     });
 
     if (!response.ok) {
-      throw { status: response.status, message: response.statusText };
+      // Extract Retry-After header for rate limiting
+      const retryAfter = response.headers.get('Retry-After');
+      throw { 
+        status: response.status, 
+        message: response.statusText,
+        retryAfter: retryAfter ? parseInt(retryAfter, 10) : undefined
+      };
     }
 
     return response;
@@ -166,8 +179,15 @@ export class WaybackClient {
     return `${this.SNAPSHOT_BASE}/${timestamp}id_/${url}`;
   }
 
-  private isHttpError(error: unknown): error is { status: number; message: string } {
+  private isHttpError(error: unknown): error is { status: number; message: string; retryAfter?: number } {
     return typeof error === 'object' && error !== null && 'status' in error;
+  }
+
+  private getRetryAfter(error: unknown): number | undefined {
+    if (this.isHttpError(error) && error.retryAfter) {
+      return error.retryAfter;
+    }
+    return undefined;
   }
 
   private sleep(ms: number): Promise<void> {
